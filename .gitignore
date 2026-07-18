@@ -1,0 +1,13 @@
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.vscode/
+.idea/
+
+# 本地临时/调试产物
+*.tmp
+temp/
+
+# 运行时数据存储在用户主目录（~/.claude/cli-bridge/），不属于这个仓库，无需忽略

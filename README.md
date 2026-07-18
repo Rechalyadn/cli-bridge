@@ -41,19 +41,39 @@
 
 ## 安装
 
-目前是手动安装（自动化安装脚本还在打磨中，见下面"项目现状"）：
+### 给你的 Agent（推荐）
 
-```bash
-git clone <this-repo> ~/.claude/skills/cli-bridge
+把下面这段话原样发给 Claude Code（或其他你正在用的 coding agent），它就能
+自己完成安装、探测环境、并和你确认模型偏好：
+
+```
+帮我安装 cli-bridge 这个 Skill：
+
+1. git clone https://github.com/Rechalyadn/cli-bridge.git ~/.claude/skills/cli-bridge
+   （只想在当前项目里用的话，克隆到 ./.claude/skills/cli-bridge 而不是 ~/.claude/skills/cli-bridge）
+2. 跑一遍 bash ~/.claude/skills/cli-bridge/scripts/bridge.sh setup probe，
+   把结果读给我看，告诉我需要做什么（比如登录 codex/opencode）。
+3. 打开 ~/.claude/skills/cli-bridge/SETUP.md，按里面的步骤跟我确认想用哪些
+   模型、职责怎么分配，帮我记录下来。
 ```
 
-或者项目级安装（只对某个项目生效）：
+### 手动安装
 
 ```bash
-git clone <this-repo> /path/to/project/.claude/skills/cli-bridge
+# 全局安装（对所有项目生效）
+git clone https://github.com/Rechalyadn/cli-bridge.git ~/.claude/skills/cli-bridge
+
+# 或者项目级安装（只对当前项目生效）
+git clone https://github.com/Rechalyadn/cli-bridge.git /path/to/project/.claude/skills/cli-bridge
 ```
 
 装好之后跑一次环境探测和个性化配置，见 [`SETUP.md`](./SETUP.md)。
+
+### 更新
+
+```bash
+cd ~/.claude/skills/cli-bridge && git pull
+```
 
 ## 使用
 
@@ -96,10 +116,10 @@ bash scripts/lib/state.test.sh \
 
 ## 项目现状
 
-这个仓库是从 `~/.claude/skills/cli-bridge`（实际运行的 Skill 目录）复制出来
-的一份"正式项目"版本，用来讨论打包/分发方式（比如要不要做成
-`install.sh` 一键安装、要不要发布到某个 Claude Code Skill 市场）。目前两边
-是各自独立的 git 仓库，尚未建立自动同步机制——这正是接下来要定的事。
+<https://github.com/Rechalyadn/cli-bridge> 是这个 Skill 的正式发布仓库——
+安装方式就是上面的 `git clone`，更新就是 `git pull`。维护者本机实际运行的
+`~/.claude/skills/cli-bridge` 尚未切换成从这个仓库安装（目前是独立维护的
+本地副本），后续会理顺。
 
 ## License
 
