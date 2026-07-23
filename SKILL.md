@@ -1,20 +1,20 @@
 ---
 name: cli-bridge
-description: Maintain multi-turn, resumable conversations with the Codex and OpenCode CLIs, scoped to the current Claude Code conversation. Use when the user asks to "tell codex...", "ask opencode...", wants Codex/OpenCode to remember earlier turns, wants to manage named codex/opencode threads (switch/list/model/effort/cwd), wants to install or set up cli-bridge on a (new) machine, check whether codex/opencode are installed/logged in/up to date, or record model/provider preferences (e.g. "use gpt-5.6-sol for X", "don't use Kimi", "codex handles the grunt work").
+description: Maintain multi-turn, resumable conversations with the Codex and OpenCode CLIs, scoped to the current host-agent conversation. Use when the user asks to "tell codex...", "ask opencode...", wants Codex/OpenCode to remember earlier turns, wants to manage named codex/opencode threads (switch/list/model/effort/cwd), wants to install or set up cli-bridge on a new machine, or record model/provider preferences.
 ---
 
 # cli-bridge
 
 Wraps `codex exec` / `codex exec resume` and `opencode run` so conversations
-with Codex / OpenCode can span multiple turns, instead of the one-shot
-behavior of the Multi-CLI MCP's `Ask-Codex` / `Ask-OpenCode` tools. See
+with Codex / OpenCode can span multiple turns, instead of one-shot delegation.
+The same core can be installed for Claude Code, Codex, or OpenCode. See
 `design.md` next to this file for the full design rationale, `plan*.md` for
 how each part was built, and `SETUP.md` for first-time installation.
 
 ## When to use this instead of Ask-Codex / Ask-OpenCode
 
 - The user wants Codex/OpenCode to remember something from an earlier call
-  in the same Claude Code conversation.
+  in the same host-agent conversation.
 - The user wants multiple independent named conversations with Codex/OpenCode
   running in parallel (e.g. one exploring, one reviewing).
 - The user explicitly invokes `/cli-bridge ...`.
@@ -29,6 +29,10 @@ bash scripts/bridge.sh <codex|opencode> ask    [--thread NAME] [--model M] [--ef
 bash scripts/bridge.sh <codex|opencode> new    --thread NAME [--model M] [--effort LEVEL] [--cwd DIR]
 bash scripts/bridge.sh <codex|opencode> switch <thread>
 bash scripts/bridge.sh <codex|opencode> list
+bash scripts/bridge.sh <codex|opencode> history <thread>
+bash scripts/bridge.sh <codex|opencode> details <thread> <turn> [--reply]
+bash scripts/bridge.sh version
+bash scripts/bridge.sh setup preflight
 bash scripts/bridge.sh <codex|opencode> model  <thread> <model>
 bash scripts/bridge.sh <codex|opencode> cwd    <thread> <dir>
 bash scripts/bridge.sh codex effort <thread> <level>
@@ -36,9 +40,10 @@ bash scripts/bridge.sh codex peek   <thread>              # 最近 10 条实时�
 ```
 
 `--thread` defaults to whatever `switch` last set (starts as `default`,
-auto-created on first `ask`). `--scope NAME` overrides the automatic
-per-conversation binding (`$CLAUDE_CODE_SESSION_ID`, or `manual` outside
-Claude Code). `--effort` and `--danger-full-access` are codex-only.
+auto-created on first `ask`). `--scope NAME` overrides automatic binding.
+Host adapters set `CLI_BRIDGE_HOST` and, when the host exposes it, a native
+host-session ID. `--host-session ID` is available when an integration needs to
+provide that ID explicitly. `--effort` and `--danger-full-access` are codex-only.
 `--cwd` works with both tools; it is stored per thread and passed to OpenCode
 as `--dir` on every call.
 
@@ -51,6 +56,36 @@ explicit marker.
 This is a plain bash script with no Claude Code dependency — it also runs
 standalone in any terminal (Windows Git Bash, macOS bash/zsh) for manual
 debugging, outside of any Claude Code conversation.
+
+## Output contract
+
+`ask` prints one compact `[cli-bridge]` summary followed by the final answer.
+The summary contains tool, thread, turn ID, status, elapsed seconds, and
+available command/tool-call counts. It never includes raw tool output or model
+reasoning. Each completed call is archived under the thread's `turns/` folder:
+use `history` to list summaries, then `details <thread> <turn>` to retrieve
+the filtered activity, adding `--reply` only when the final answer itself is
+needed again.
+
+Before a V2 installation or migration, run `setup preflight`. It is read-only:
+it reports this package version, classifies global Claude Code/Codex/OpenCode
+skill copies as `legacy-v1`, `v2`, or `absent`, and checks local CLI versions.
+Do not delete a legacy copy until the replacement V2 copy has been installed
+and verified.
+
+## Calling from a host agent
+
+Use the host adapter, rather than calling `bridge.sh` directly:
+
+```bash
+bash scripts/adapters/claude-code.sh codex ask "..."
+bash scripts/adapters/codex.sh opencode ask "..."
+bash scripts/adapters/opencode.sh codex ask "..."
+```
+
+The adapter records the host identity. When cli-bridge launches a nested
+Codex/OpenCode CLI, its child inherits the parent logical bridge session; this
+links the child scope without requiring the agent to locate a native session ID.
 
 ## Calling from Claude
 

@@ -22,6 +22,10 @@ assert_eq() {
 
 assert_eq "default thread initial value" "default" "$(get_default_thread codex)"
 
+ensure_scope_metadata
+assert_eq "scope metadata records host" "manual" "$(cat "$(scope_dir)/host")"
+assert_eq "scope metadata records host session" "manual" "$(cat "$(scope_dir)/host_session_id")"
+
 write_field codex mythread model gpt-5.5
 assert_eq "model roundtrip" "gpt-5.5" "$(read_field codex mythread model)"
 
