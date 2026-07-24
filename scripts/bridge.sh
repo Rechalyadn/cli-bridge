@@ -233,7 +233,7 @@ do_setup_note() {
     *'|'*) die "model/tier/note 不能包含 '|' 字符（用作内部分隔符）" ;;
   esac
   upsert_model_note "$tool" "$model" "$tier" "$note"
-  echo "已记录：$tool / $model → $tier：$note"
+  echo "已记录：$tool / $model → ${tier}：${note}"
 }
 
 do_setup_notes() {
@@ -536,7 +536,7 @@ do_new() {
     cwd="${existing_cwd:-$(pwd)}"
   fi
   write_field "$TOOL" "$THREAD" cwd "$cwd"
-  echo "线程 $THREAD 已重置，下次 ask 会建立新会话（工作目录：$cwd）"
+  echo "线程 $THREAD 已重置，下次 ask 会建立新会话（工作目录：${cwd}）"
   release_thread_lock
 }
 
@@ -582,7 +582,7 @@ do_ask() {
     existing_cwd="$(read_field "$TOOL" "$thread" cwd)"
     if [ -n "$existing_cwd" ] && [ -n "$CWD" ]; then
       release_thread_lock
-      die "线程 '$thread' 的工作目录已锁定为 $existing_cwd；如需修改，请用 'bridge.sh codex cwd $thread <dir>'（仅在会话尚未开始时有效）或新建线程"
+      die "线程 '$thread' 的工作目录已锁定为 ${existing_cwd}；如需修改，请用 'bridge.sh codex cwd $thread <dir>'（仅在会话尚未开始时有效）或新建线程"
     fi
     cwd="$existing_cwd"
     if [ -z "$cwd" ]; then
@@ -619,7 +619,7 @@ do_ask() {
     existing_cwd="$(read_field "$TOOL" "$thread" cwd)"
     if [ -n "$existing_cwd" ] && [ -n "$CWD" ]; then
       release_thread_lock
-      die "线程 '$thread' 的工作目录已锁定为 $existing_cwd；如需修改，请用 'bridge.sh opencode cwd $thread <dir>'"
+      die "线程 '$thread' 的工作目录已锁定为 ${existing_cwd}；如需修改，请用 'bridge.sh opencode cwd $thread <dir>'"
     fi
     cwd="$existing_cwd"
     if [ -z "$cwd" ]; then

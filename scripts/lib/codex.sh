@@ -79,7 +79,7 @@ codex_format_activity_line() {
         printf '正在运行命令：%s\n' "${detail:-<未提供命令>}"
       elif [ "$event_type" = "item.completed" ]; then
         exit_code="$(printf '%s' "$line" | sed -n 's/.*"exit_code"[[:space:]]*:[[:space:]]*\(-\{0,1\}[0-9][0-9]*\).*/\1/p')"
-        printf '命令已完成%s：%s\n' "${exit_code:+（退出码 $exit_code）}" "${detail:-<未提供命令>}"
+        printf '命令已完成%s：%s\n' "${exit_code:+（退出码 ${exit_code}）}" "${detail:-<未提供命令>}"
       fi
       ;;
     file_change)
