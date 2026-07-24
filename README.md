@@ -15,8 +15,9 @@
 - **多线程并行会话** — 同时维护多条独立的 codex/opencode 对话（比如一条
   `explore`、一条 `review`），随时切换，互不干扰
 - **按宿主会话自动隔离** — 线程绑定宿主 Agent 与其会话 ID；Claude Code 自动读取
-  `$CLAUDE_CODE_SESSION_ID`，Codex/OpenCode 适配器可接收它们暴露的 session ID，
-  也可用 `--host-session` 显式接入
+  `$CLAUDE_CODE_SESSION_ID`，Codex 自动读取 `$CODEX_SESSION_ID` 或
+  `$CODEX_THREAD_ID`，OpenCode 读取 `$OPENCODE_SESSION_ID`；宿主未暴露 ID 时也可用
+  `--host-session` 显式接入
 - **父子会话谱系** — 由 cli-bridge 启动的嵌套 Codex/OpenCode 进程自动继承父逻辑会话，
   不需要子 Agent 再查找父 session
 - **线程绑定工作目录** — 每个线程可以固定一个专属 `cwd`，建线程时锁定，生命
@@ -60,8 +61,9 @@ Claude Code 目录**。
    `~/.claude/cli-bridge`。
 3. 运行 `bash scripts/install.sh`，进入 Skills CLI 的交互选择。让我选择要安装的
    宿主（Claude Code、Codex、OpenCode），只勾选我确认的对象。
-4. 对每个已选宿主，确认其 skill 副本包含 `SKILL.md`、`VERSION`、`scripts/bridge.sh`
-   和 `scripts/adapters/`，并运行 `bash scripts/bridge.sh version` 确认是 V2。
+4. 按 Skills CLI 输出的实际安装路径确认 skill 副本包含 `SKILL.md`、`VERSION`、
+   `scripts/bridge.sh` 和 `scripts/adapters/`，并运行 `bash scripts/bridge.sh version`
+   确认是 V2。不要自行假设副本一定在某个宿主的原生目录。
 5. 运行 `bash scripts/bridge.sh setup probe`；再询问我模型职责、预算偏好和禁用模型，
    经我确认后用 `setup note` / `setup guidance` 写入 V2 共享状态目录
    `~/.cli-bridge`。
@@ -119,10 +121,11 @@ bash scripts/bridge.sh setup <probe|note|notes|note-rm|guidance>
 ```
 
 每次 `ask` 会先返回一行简短调用摘要（工具、线程、turn、状态、耗时、已知的命令/
-工具调用数），再返回最终答案。完整过程不会混进主 Agent 上下文：它按 turn 保存到
-`~/.cli-bridge/sessions/.../threads/<thread>/turns/<turn>/`。需要追溯时先用
-`history` 找 turn，再用 `details` 查看过滤后的活动；只有追加 `--reply` 才会再次打印
-该 turn 的最终答案。
+工具调用数），再**直接返回最终答案给调用它的 Agent**。完整过程不会混进主 Agent
+上下文：它按 turn 保存到 `~/.cli-bridge/sessions/.../threads/<thread>/turns/<turn>/`。
+需要追溯时先用 `history` 找 turn，再用 `details` 查看过滤后的活动；只有追加 `--reply`
+才会再次打印该 turn 的最终答案。调用方不需要读取或寻找 Codex/OpenCode 的原生
+session ID；摘要中的 `thread`、`turn` 与 `details` 命令就是回读入口。
 
 完整命令说明和已知报错信息见 [`SKILL.md`](./SKILL.md)。
 
@@ -153,12 +156,16 @@ bash scripts/lib/state.test.sh \
 | [`design.md`](./design.md) | 完整设计文档：存储布局、并发模型、每个设计取舍的理由 |
 | `plan.md` / `plan-*.md` | 各阶段实现前写的计划文档，历史存档，不是活文档 |
 
-## 项目现状
+## V2 状态
 
-<https://github.com/Rechalyadn/cli-bridge> 是这个 Skill 的正式发布仓库——
-安装方式就是上面的 `git clone`，更新就是 `git pull`。维护者本机实际运行的
-`~/.claude/skills/cli-bridge` 尚未切换成从这个仓库安装（目前是独立维护的
-本地副本），后续会理顺。
+<https://github.com/Rechalyadn/cli-bridge> 是正式发布仓库。V2 的推荐安装与更新方式
+都是上文的 Skills CLI 流程，不再把 `git clone` / `git pull` 当作终端用户的安装方式。
+
+- Codex 的自动宿主绑定已实测：Codex Desktop 暴露的 `$CODEX_THREAD_ID` 会自动成为
+  cli-bridge scope 的 host session ID。
+- OpenCode 的适配器会自动读取 `$OPENCODE_SESSION_ID`；若其运行环境未暴露该变量，
+  用 `--host-session` 明确绑定即可。建议首次在 OpenCode 宿主内运行 `list` 后确认
+  `~/.cli-bridge/sessions/opencode--<host-session>/host_session_id`。
 
 ## License
 
