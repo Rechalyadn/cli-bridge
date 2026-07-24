@@ -6,7 +6,7 @@
 # one conversation, it's a standing preference. Pure file I/O, no network or
 # external CLI calls -- fully unit-testable, unlike `setup probe` itself.
 
-: "${CLI_BRIDGE_HOME:=$HOME/.claude/cli-bridge}"
+: "${CLI_BRIDGE_HOME:=$HOME/.cli-bridge}"
 
 model_notes_file() {
   printf '%s/model_notes.txt' "$CLI_BRIDGE_HOME"

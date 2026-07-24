@@ -10,6 +10,7 @@ case "${OSTYPE:-}" in
 esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=./lib/state.sh
 source "$SCRIPT_DIR/lib/state.sh"
 # shellcheck source=./lib/codex.sh
@@ -72,10 +73,12 @@ run_with_timeout() {
 
 usage() {
   cat <<'EOF'
-Usage: bridge.sh <codex|opencode> <ask|peek|new|switch|list|model|effort|cwd> [options] [prompt]
+Usage: bridge.sh <version|codex|opencode> <ask|peek|history|details|new|switch|list|model|effort|cwd> [options] [prompt]
 
   ask    [--thread NAME] [--model M] [--effort LEVEL] [--danger-full-access] [--cwd DIR] "<prompt>"
   peek   <thread>               (仅 codex；显示最近 10 条活动)
+  history <thread>              (列出已完成调用的摘要)
+  details <thread> <turn> [--reply]  (显示某次调用的活动；--reply 附带最终答复)
   new    --thread NAME [--model M] [--effort LEVEL] [--cwd DIR]
   switch <thread>
   list
@@ -83,9 +86,10 @@ Usage: bridge.sh <codex|opencode> <ask|peek|new|switch|list|model|effort|cwd> [o
   effort <thread> <level>      (codex only)
   cwd    <thread> <dir>
 
-Global: --scope NAME (overrides CLAUDE_CODE_SESSION_ID-based scope), --timeout SECONDS
+Global: --scope NAME, --host NAME, --host-session ID, --parent-session ID,
+        --timeout SECONDS
 
-Also see: bridge.sh setup <probe|note|notes|note-rm|guidance>  (environment
+Also see: bridge.sh setup <preflight|probe|note|notes|note-rm|guidance>  (environment
 probing + global model-preference notes; run with no args for its own usage)
 EOF
 }
@@ -116,8 +120,9 @@ validate_identifier() {
 
 setup_usage() {
   cat <<'EOF'
-Usage: bridge.sh setup <probe|note|notes|note-rm|guidance> [args...]
+Usage: bridge.sh setup <preflight|probe|note|notes|note-rm|guidance> [args...]
 
+  preflight                              扫描 V1/V2 安装副本，并检查 codex/opencode 可用性
   probe                                  探测本机 codex/opencode 安装、登录、可用模型情况
   note    <tool> <model> <tier> <note>   记录/更新一条模型偏好（tool: codex|opencode）
   notes                                  列出所有模型偏好记录
@@ -127,6 +132,68 @@ Usage: bridge.sh setup <probe|note|notes|note-rm|guidance> [args...]
 这些记录仅供参考，供 Claude 阅读后自行决定用什么模型/工具，bridge.sh 不会
 用它们校验或拦截 ask/new 的 --model 参数。
 EOF
+}
+
+print_install_status() {
+  local host="$1" path="$2" version
+  if [ ! -d "$path" ]; then
+    printf '%-12s status=absent path=%s\n' "$host" "$path"
+    return 0
+  fi
+  if [ -f "$path/VERSION" ]; then
+    version="$(tr -d '[:space:]' < "$path/VERSION")"
+    printf '%-12s status=v2 version=%s path=%s\n' "$host" "${version:-unknown}" "$path"
+  elif [ -f "$path/SKILL.md" ] || [ -f "$path/scripts/bridge.sh" ]; then
+    printf '%-12s status=legacy-v1 path=%s\n' "$host" "$path"
+  else
+    printf '%-12s status=unrecognized path=%s\n' "$host" "$path"
+  fi
+}
+
+print_cli_status() {
+  local tool="$1" version status
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    printf '%-12s status=missing\n' "$tool"
+    return 0
+  fi
+  if version="$("$tool" --version 2>&1)"; then
+    status="found"
+  else
+    status="error"
+  fi
+  version="$(printf '%.512s' "$version" | tr '\n' ' ')"
+  printf '%-12s status=%s version=%s\n' "$tool" "$status" "${version:-unknown}"
+}
+
+cli_is_usable() {
+  command -v "$1" >/dev/null 2>&1 && "$1" --version >/dev/null 2>&1
+}
+
+# Installation preflight: only reads local paths and CLI status.  It never
+# installs, removes, or calls a model, so an agent can safely use it before
+# presenting a V1-to-V2 migration plan to the user.
+do_setup_preflight() {
+  echo "=== cli-bridge ==="
+  printf 'version=%s\n' "$(tr -d '[:space:]' < "$SKILL_DIR/VERSION" 2>/dev/null || printf unknown)"
+  printf 'runtime=%s\n' "$CLI_BRIDGE_HOME"
+  printf 'current_skill=%s\n' "$SKILL_DIR"
+  echo "=== installed skills ==="
+  print_install_status "claude-code" "$HOME/.claude/skills/cli-bridge"
+  print_install_status "codex" "$HOME/.codex/skills/cli-bridge"
+  print_install_status "opencode" "$HOME/.config/opencode/skills/cli-bridge"
+  echo "=== cli availability ==="
+  print_cli_status codex
+  print_cli_status opencode
+  if cli_is_usable codex; then
+    echo "=== codex login ==="
+    codex login status 2>&1 | head -c 1024
+    echo
+  fi
+  if cli_is_usable opencode; then
+    echo "=== opencode providers ==="
+    opencode providers list 2>&1 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | head -c 1024
+    echo
+  fi
 }
 
 # Pure fact-gathering: prints raw CLI output under section headers, makes no
@@ -213,8 +280,13 @@ require_positive_integer CLI_BRIDGE_LOCK_WAIT_SECONDS "$CLI_BRIDGE_LOCK_WAIT_SEC
 
 [ $# -ge 1 ] || { usage; exit 1; }
 
-# First pass: pull --scope out from anywhere in the arg list, so it's set
-# before any state.sh function runs, regardless of where the user put it.
+if [ "$1" = "version" ]; then
+  printf 'cli-bridge %s\n' "$(tr -d '[:space:]' < "$SKILL_DIR/VERSION" 2>/dev/null || printf unknown)"
+  exit 0
+fi
+
+# First pass: pull session-identity flags out from anywhere in the arg list,
+# so host/scope resolution is stable before any state.sh function runs.
 args=("$@")
 filtered=()
 i=0
@@ -227,6 +299,18 @@ while [ "$i" -lt "${#args[@]}" ]; do
     # with no value after it) -- check bounds before indexing.
     [ "$i" -lt "${#args[@]}" ] || die "missing value for --scope"
     export BRIDGE_SCOPE="${args[$i]}"
+  elif [ "$a" = "--host" ]; then
+    i=$((i + 1))
+    [ "$i" -lt "${#args[@]}" ] || die "missing value for --host"
+    export CLI_BRIDGE_HOST="${args[$i]}"
+  elif [ "$a" = "--host-session" ]; then
+    i=$((i + 1))
+    [ "$i" -lt "${#args[@]}" ] || die "missing value for --host-session"
+    export CLI_BRIDGE_HOST_SESSION_ID="${args[$i]}"
+  elif [ "$a" = "--parent-session" ]; then
+    i=$((i + 1))
+    [ "$i" -lt "${#args[@]}" ] || die "missing value for --parent-session"
+    export CLI_BRIDGE_PARENT_SESSION_ID="${args[$i]}"
   else
     filtered+=("$a")
   fi
@@ -241,16 +325,14 @@ else
   set --
 fi
 
-validate_identifier "scope" "$(resolve_scope)"
-
 [ $# -ge 1 ] || { usage; exit 1; }
 
-# `setup` is not a <tool>, it applies to both codex and opencode at once (or
-# to neither, for the global model-notes/guidance commands) -- special-case
-# it here, before TOOL is required to be codex/opencode.
+# Setup is global configuration/inspection, not a host conversation.  Keep it
+# ahead of scope initialization so `setup preflight` is genuinely read-only.
 if [ "$1" = "setup" ]; then
   shift
   case "${1:-}" in
+    preflight) do_setup_preflight ;;
     probe) do_setup_probe ;;
     note) shift; do_setup_note "${1:-}" "${2:-}" "${3:-}" "${4:-}" ;;
     notes) do_setup_notes ;;
@@ -260,6 +342,12 @@ if [ "$1" = "setup" ]; then
   esac
   exit 0
 fi
+
+validate_identifier "scope" "$(resolve_scope)"
+validate_identifier "host" "$(resolve_host)"
+validate_identifier "host session" "$(resolve_host_session_id)"
+[ -z "$(resolve_parent_bridge_session_id)" ] || validate_identifier "parent session" "$(resolve_parent_bridge_session_id)"
+ensure_scope_metadata
 
 TOOL="$1"; shift
 [ "$TOOL" = "codex" ] || [ "$TOOL" = "opencode" ] || die "unknown tool '$TOOL' (expected codex or opencode)"
@@ -274,6 +362,7 @@ DANGER=0
 CWD=""
 TIMEOUT="$DEFAULT_TIMEOUT"
 POSITIONAL=()
+DETAIL_REPLY=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -287,6 +376,7 @@ while [ $# -gt 0 ]; do
     --danger-full-access) DANGER=1; shift ;;
     --cwd) [ $# -ge 2 ] || die "missing value for --cwd"; CWD="$2"; shift 2 ;;
     --timeout) [ $# -ge 2 ] || die "missing value for --timeout"; TIMEOUT="$2"; shift 2 ;;
+    --reply) DETAIL_REPLY=1; shift ;;
     *) POSITIONAL+=("$1"); shift ;;
   esac
 done
@@ -363,6 +453,69 @@ do_peek() {
   tail -n 10 "$live_file"
 }
 
+activity_count() {
+  local file="$1" prefix="$2" count
+  [ -f "$file" ] || { printf '0'; return 0; }
+  count="$(grep -c "^$prefix" "$file" 2>/dev/null || true)"
+  printf '%s' "${count:-0}"
+}
+
+write_turn_summary() {
+  local thread="$1" turn="$2" status="$3" started="$4" ended="$5" native_session="$6" live_file="$7"
+  local commands tools duration
+  duration=$((ended - started))
+  commands="$(activity_count "$live_file" "正在运行命令")"
+  tools="$(activity_count "$live_file" "正在调用工具")"
+  write_turn_field "$TOOL" "$thread" "$turn" status "$status"
+  write_turn_field "$TOOL" "$thread" "$turn" started_at "$started"
+  write_turn_field "$TOOL" "$thread" "$turn" ended_at "$ended"
+  write_turn_field "$TOOL" "$thread" "$turn" duration_seconds "$duration"
+  write_turn_field "$TOOL" "$thread" "$turn" native_session_id "$native_session"
+  write_turn_field "$TOOL" "$thread" "$turn" command_count "$commands"
+  write_turn_field "$TOOL" "$thread" "$turn" tool_call_count "$tools"
+  printf '[cli-bridge] tool=%s thread=%s turn=%s status=%s duration=%ss commands=%s tools=%s details="bridge.sh %s details %s %s"\n' \
+    "$TOOL" "$thread" "$turn" "$status" "$duration" "$commands" "$tools" "$TOOL" "$thread" "$turn"
+}
+
+do_history() {
+  local thread="${POSITIONAL[0]:-${THREAD:-}}" turn
+  [ -n "$thread" ] || die "usage: bridge.sh $TOOL history <thread>"
+  validate_identifier "thread" "$thread"
+  for turn in $(list_turn_ids "$TOOL" "$thread"); do
+    printf '%-28s status=%-8s duration=%4ss commands=%s tools=%s\n' "$turn" \
+      "$(read_turn_field "$TOOL" "$thread" "$turn" status)" \
+      "$(read_turn_field "$TOOL" "$thread" "$turn" duration_seconds)" \
+      "$(read_turn_field "$TOOL" "$thread" "$turn" command_count)" \
+      "$(read_turn_field "$TOOL" "$thread" "$turn" tool_call_count)"
+  done
+}
+
+do_details() {
+  local thread="${POSITIONAL[0]:-${THREAD:-}}" turn="${POSITIONAL[1]:-}" d
+  [ -n "$thread" ] && [ -n "$turn" ] || die "usage: bridge.sh $TOOL details <thread> <turn> [--reply]"
+  validate_identifier "thread" "$thread"
+  validate_identifier "turn" "$turn"
+  d="$(turn_dir "$TOOL" "$thread" "$turn")"
+  [ -d "$d" ] || die "turn '$turn' not found for thread '$thread'"
+  printf '[cli-bridge] tool=%s thread=%s turn=%s status=%s duration=%ss commands=%s tools=%s\n' \
+    "$TOOL" "$thread" "$turn" "$(read_turn_field "$TOOL" "$thread" "$turn" status)" \
+    "$(read_turn_field "$TOOL" "$thread" "$turn" duration_seconds)" \
+    "$(read_turn_field "$TOOL" "$thread" "$turn" command_count)" \
+    "$(read_turn_field "$TOOL" "$thread" "$turn" tool_call_count)"
+  if [ -f "$d/activity.log" ]; then
+    echo "--- activity ---"
+    cat "$d/activity.log"
+  fi
+  if [ "$DETAIL_REPLY" -eq 1 ] && [ -f "$d/reply.txt" ]; then
+    echo "--- reply ---"
+    print_bounded_file "$d/reply.txt" "$CLI_BRIDGE_MAX_REPLY_BYTES"
+  fi
+  if [ -f "$d/error.txt" ]; then
+    echo "--- error ---"
+    print_bounded_file "$d/error.txt" "$CLI_BRIDGE_MAX_ERROR_BYTES"
+  fi
+}
+
 do_new() {
   [ -n "$THREAD" ] || die "usage: bridge.sh $TOOL new --thread NAME [--model M] [--effort E] [--cwd DIR]"
   validate_identifier "thread" "$THREAD"
@@ -393,6 +546,13 @@ do_ask() {
   local thread="${THREAD:-$(get_default_thread "$TOOL")}"
   validate_identifier "thread" "$thread"
   acquire_thread_lock "$TOOL" "$thread" || die "thread '$thread' is busy"
+  # Nested Codex/OpenCode CLI processes inherit this logical session ID.  If
+  # they later invoke their host adapter, it becomes the child's parent link.
+  export CLI_BRIDGE_BRIDGE_SESSION_ID="$(resolve_scope)"
+  local turn started_at
+  turn="$(new_turn_id "$TOOL" "$thread")"
+  started_at="$(date +%s)"
+  write_turn_field "$TOOL" "$thread" "$turn" host "$(resolve_host)"
   local session_id model effort
   session_id="$(read_field "$TOOL" "$thread" session_id)"
   model="${MODEL:-$(read_field "$TOOL" "$thread" model)}"
@@ -483,6 +643,8 @@ do_ask() {
   fi
 
   if [ "$status" -eq 124 ]; then
+    write_turn_field "$TOOL" "$thread" "$turn" error "timeout after ${TIMEOUT} seconds"
+    write_turn_summary "$thread" "$turn" timeout "$started_at" "$(date +%s)" "$session_id" "$(thread_dir "$TOOL" "$thread")/activity.log" >&2
     rm -f "$reply_file" "$sid_out_file"
     release_thread_lock
     die "超时未完成（超过 ${TIMEOUT} 秒）"
@@ -491,6 +653,8 @@ do_ask() {
   if [ "$status" -ne 0 ]; then
     local raw
     raw="$(tail -c "$CLI_BRIDGE_MAX_ERROR_BYTES" "$reply_file")"
+    printf '%s' "$raw" > "$(turn_dir "$TOOL" "$thread" "$turn")/error.txt"
+    write_turn_summary "$thread" "$turn" error "$started_at" "$(date +%s)" "$session_id" "$(thread_dir "$TOOL" "$thread")/activity.log" >&2
     if [ "$TOOL" = "codex" ] && codex_is_untrusted_dir_error "$raw"; then
       rm -f "$reply_file" "$sid_out_file"
       release_thread_lock
@@ -512,9 +676,13 @@ do_ask() {
     exit 1
   fi
 
-  print_bounded_file "$reply_file" "$CLI_BRIDGE_MAX_REPLY_BYTES"
   local new_sid
   new_sid="$(cat "$sid_out_file")"
+  local native_session="${new_sid:-$session_id}"
+  cp "$(thread_dir "$TOOL" "$thread")/activity.log" "$(turn_dir "$TOOL" "$thread" "$turn")/activity.log" 2>/dev/null || true
+  cp "$reply_file" "$(turn_dir "$TOOL" "$thread" "$turn")/reply.txt"
+  write_turn_summary "$thread" "$turn" ok "$started_at" "$(date +%s)" "$native_session" "$(thread_dir "$TOOL" "$thread")/activity.log"
+  print_bounded_file "$reply_file" "$CLI_BRIDGE_MAX_REPLY_BYTES"
   rm -f "$reply_file" "$sid_out_file"
   if [ -n "$new_sid" ]; then
     write_field "$TOOL" "$thread" session_id "$new_sid"
@@ -549,6 +717,8 @@ do_cwd() {
 case "$ACTION" in
   ask) do_ask ;;
   peek) do_peek ;;
+  history) do_history ;;
+  details) do_details ;;
   new) do_new ;;
   switch) do_switch ;;
   list) do_list ;;
